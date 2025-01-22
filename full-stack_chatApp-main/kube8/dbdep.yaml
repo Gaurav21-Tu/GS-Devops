@@ -1,0 +1,49 @@
+kind: Deployment
+apiVersion: apps/v1
+metadata:
+ name: appdb
+ namespace: bigapp
+
+spec:
+ replicas: 1
+ selector:
+   matchLabels:
+     app: myapp
+ 
+ template:
+  metadata:
+   labels:
+     app: myapp
+
+  spec:
+     containers:
+      - name: mongodb
+        image: mongo:latest
+        volumeMounts: 
+         - mountPath: /data
+           name: myvol
+        resources:
+         requests:
+           memory: 500Mi
+           cpu: 100m
+         limits:
+          memory: 1Gi
+          cpu: 500m
+       
+        env:
+         - name: MONGO_INITDB_ROOT_USERNAME
+           value: admin
+         - name: MONGO_INITDB_ROOT_PASSWORD
+           value: pass
+        ports:
+        - containerPort: 27017
+        livenessProbe:
+            httpGet:
+             port: 27017
+        readinessProbe: 
+           httpGet: 
+            port: 27017   
+     volumes: 
+        - name: myvol
+          persistentVolumeClaim:
+           claimName: mypvc   

@@ -1,0 +1,13 @@
+kind: Service
+apiVersion: v1
+metadata:
+ name: servdb
+ namespace: bigapp
+
+spec:
+  selector:
+   app: myapp
+   
+  ports:
+    - port: 75
+      targetPort: 27017

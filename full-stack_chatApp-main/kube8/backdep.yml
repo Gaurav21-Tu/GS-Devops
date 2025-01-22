@@ -1,0 +1,35 @@
+kind: Deployment
+apiVersion: apps/v1
+metadata: 
+ name: backdep
+ namespace: bigapp
+spec:
+  replicas: 1
+  selector:
+   matchLabels: 
+     app: backapp
+  
+  template:
+    metadata:
+     labels: 
+       app: backapp
+    spec:
+     containers:
+       - name: backdep
+         image: trainwithshubham/chatapp-backend:latest
+         env:
+         - name: NODE_ENV
+           value: production
+         - name: MONGODB_URI
+           value: "mongodb://admin:pass@servdb:75/dbname?authSource=admin"
+         - name: PORT
+           value: "5001" 
+         - name: JWT_SECRET
+           valueFrom:
+            secretKeyRef:
+             name: appsec
+             key: jwt         
+         ports:
+         - containerPort: 5001
+
+    

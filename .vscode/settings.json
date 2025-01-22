@@ -1,0 +1,5 @@
+{
+    "yaml.schemas": {
+        "kubernetes://schema/apps/v1@deployment": "file:///Users/karanravika26gmail.com/Desktop/Newapp/full-stack_chatApp-main/kube8/backdep.yml"
+    }
+}
