@@ -1,0 +1,91 @@
+.home-container {
+  min-height: 100vh;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+  padding: 20px;
+}
+
+.home-card {
+  background: white;
+  padding: 40px;
+  border-radius: 20px;
+  box-shadow: 0 20px 60px rgba(0, 0, 0, 0.3);
+  max-width: 900px;
+  width: 100%;
+}
+
+.home-card h1 {
+  margin: 0 0 10px 0;
+  color: #333;
+  font-size: 36px;
+  text-align: center;
+}
+
+.home-card p {
+  margin: 0 0 40px 0;
+  color: #666;
+  text-align: center;
+  font-size: 18px;
+}
+
+.button-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(200px, 1fr));
+  gap: 20px;
+}
+
+.nav-button {
+  background: white;
+  border: 2px solid #e0e0e0;
+  padding: 30px 20px;
+  border-radius: 12px;
+  cursor: pointer;
+  transition: all 0.3s ease;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 10px;
+}
+
+.nav-button:hover {
+  transform: translateY(-5px);
+  box-shadow: 0 10px 25px rgba(0, 0, 0, 0.15);
+}
+
+.button-icon {
+  font-size: 48px;
+}
+
+.button-title {
+  font-size: 18px;
+  font-weight: 600;
+  color: #333;
+}
+
+.button-desc {
+  font-size: 14px;
+  color: #777;
+  text-align: center;
+}
+
+.logs-button:hover {
+  border-color: #007bff;
+}
+
+.attack-button:hover {
+  border-color: #dc3545;
+}
+
+.blocked-button:hover {
+  border-color: #ffc107;
+}
+
+.stats-button:hover {
+  border-color: #28a745;
+}
+
+.settings-button:hover {
+  border-color: #6c757d;
+}

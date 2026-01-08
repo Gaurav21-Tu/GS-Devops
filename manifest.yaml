@@ -1,0 +1,79 @@
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: request-filter
+  namespace: filter
+  labels:
+    app: request-filter
+spec:
+  replicas: 2
+  selector:
+    matchLabels:
+      app: request-filter
+  template:
+    metadata:
+      labels:
+        app: request-filter
+    spec:
+      containers:
+        - name: filter
+          image: request_filter:latest
+          imagePullPolicy: Never
+          volumeMounts:
+            - name: sqlite-storage
+              mountPath: /data/sqdata
+          env:
+            - name: BACKEND_URL
+              value: "http://10.26.30.45:31087"
+            - name: REDIS_URL
+              value: "redis://:yourpassword@redis.filter.svc.cluster.local:6379/0"  
+            - name: LISTEN_PORT
+              value: "8888"
+            - name: WINDOW_SECONDS
+              value: "10"
+            - name: THRESHOLD
+              value: "5"
+            - name: BLOCK_DURATION
+              value: "30"
+            - name: TRUST_XFF
+              value: "true"
+            - name: SQLITE_DB_PATH
+              value: "/data/sqdata/request_filter.db"
+          ports:
+            - containerPort: 8888
+          resources:
+            limits:
+              cpu: "500m"
+              memory: "512Mi"
+      volumes:
+        - name: sqlite-storage
+          persistentVolumeClaim:
+            claimName: sqlite-pvc
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: request-filter
+  namespace: filter
+spec:
+  selector:
+    app: request-filter
+  type: NodePort
+  ports:
+    - protocol: TCP
+      port: 80
+      targetPort: 8888
+      nodePort: 32500  # example NodePort in range 30000-32767
+
+---
+apiVersion: v1
+kind: PersistentVolumeClaim
+metadata:
+  name: sqlite-pvc
+  namespace: filter
+spec:
+  accessModes:
+    - ReadWriteOnce
+  resources:
+    requests:
+      storage: 1Gi 

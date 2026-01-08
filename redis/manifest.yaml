@@ -1,0 +1,49 @@
+apiVersion: apps/v1
+kind: StatefulSet
+metadata:
+  name : redis
+  namespace: filter
+
+spec:
+  serviceName: "redis"
+  replicas: 1
+  selector:
+    matchLabels:
+      app: redis
+  template:
+    metadata:
+      labels:
+        app: redis
+    spec:
+      containers:
+        - name: redis
+          image: redis:6.0.9
+          imagePullPolicy: IfNotPresent
+          ports:
+            - containerPort: 6379
+          env:
+            - name: REDIS_PASSWORD
+              value: "yourpassword"
+          args: ["--requirepass", "yourpassword"]
+          resources:
+            limits:
+              cpu: "500m"
+              memory: "512Mi"
+
+---
+
+kind: Service
+apiVersion: v1
+metadata:
+  name : redis
+  namespace: filter
+spec:
+  ports:
+    - port: 6379
+      name : redis
+      targetPort: 6379
+  selector:
+    app: redis
+
+
+
