@@ -19,9 +19,9 @@ spec:
         - name: filter
           image: devart.azurecr.io/backend:latest
           imagePullPolicy: Always
-          # volumeMounts:
-          #   - name: sqlite-storage
-          #     mountPath: /data/sqdata
+          volumeMounts:
+            - name: sqlite-storage
+              mountPath: /data/sqdata
           env:
             - name: BACKEND_URL
               value: "http://10.26.30.45:31087"
@@ -45,10 +45,11 @@ spec:
             requests:
               cpu: "100m"
               memory: "256Mi"
-      # volumes:
-      #   - name: sqlite-storage
-      #     persistentVolumeClaim:
-      #       claimName: sqlite-pvc
+      volumes:
+        - name: sqlite-storage
+          emptyDir: {}
+          # persistentVolumeClaim:
+          #   claimName: sqlite-pvc
 ---
 apiVersion: v1
 kind: Service
