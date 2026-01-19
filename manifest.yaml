@@ -18,7 +18,7 @@ spec:
       containers:
         - name: filter
           image: devart.azurecr.io/backend:latest
-          imagePullPolicy: Never
+          imagePullPolicy: Always
           volumeMounts:
             - name: sqlite-storage
               mountPath: /data/sqdata
@@ -37,18 +37,18 @@ spec:
               value: "30"
             - name: TRUST_XFF
               value: "true"
-            - name: SQLITE_DB_PATH
-              value: "/data/sqdata/request_filter.db"
+            # - name: SQLITE_DB_PATH
+            #   value: "/data/sqdata/request_filter.db"
           ports:
             - containerPort: 8888
           resources:
             requests:
               cpu: "100m"
               memory: "256Mi"
-      volumes:
-        - name: sqlite-storage
-          persistentVolumeClaim:
-            claimName: sqlite-pvc
+      # volumes:
+      #   - name: sqlite-storage
+      #     persistentVolumeClaim:
+      #       claimName: sqlite-pvc
 ---
 apiVersion: v1
 kind: Service
@@ -66,14 +66,14 @@ spec:
       nodePort: 32500  # example NodePort in range 30000-32767
 
 ---
-apiVersion: v1
-kind: PersistentVolumeClaim
-metadata:
-  name: sqlite-pvc
-  namespace: filter
-spec:
-  accessModes:
-    - ReadWriteOnce
-  resources:
-    requests:
-      storage: 1Gi 
+# apiVersion: v1
+# kind: PersistentVolumeClaim
+# metadata:
+#   name: sqlite-pvc
+#   namespace: filter
+# spec:
+#   accessModes:
+#     - ReadWriteOnce
+#   resources:
+#     requests:
+#       storage: 1Gi 
