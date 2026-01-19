@@ -19,9 +19,9 @@ spec:
         - name: filter
           image: devart.azurecr.io/backend:latest
           imagePullPolicy: Always
-          # volumeMounts:
-          #   - name: sqlite-storage
-          #     mountPath: /data/sqdata
+          volumeMounts:
+            - name: sqlite-storage
+              mountPath: /data/sqdata
           env:
             - name: BACKEND_URL
               value: "http://10.26.30.45:31087"
@@ -37,8 +37,8 @@ spec:
               value: "30"
             - name: TRUST_XFF
               value: "true"
-            # - name: SQLITE_DB_PATH
-            #   value: "/data/sqdata/request_filter.db"
+            - name: SQLITE_DB_PATH
+              value: "/data/sqdata/request_filter.db"
           ports:
             - containerPort: 8888
           resources:
