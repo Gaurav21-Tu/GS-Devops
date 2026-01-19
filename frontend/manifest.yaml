@@ -17,7 +17,7 @@ spec:
     spec:
       containers:
         - name: frontend
-          image: devart.azurecr.io/frontend :latest
+          image: devart.azurecr.io/frontend:latest
           imagePullPolicy: Never
           ports:
             - containerPort: 80
