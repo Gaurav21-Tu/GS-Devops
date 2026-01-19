@@ -6,7 +6,7 @@ metadata:
   labels:
     app: request-filter
 spec:
-  replicas: 2
+  replicas: 1
   selector:
     matchLabels:
       app: request-filter
@@ -17,7 +17,7 @@ spec:
     spec:
       containers:
         - name: filter
-          image: request_filter:latest
+          image: devart.azurecr.io/backend:latest
           imagePullPolicy: Never
           volumeMounts:
             - name: sqlite-storage
@@ -42,9 +42,9 @@ spec:
           ports:
             - containerPort: 8888
           resources:
-            limits:
-              cpu: "500m"
-              memory: "512Mi"
+            requests:
+              cpu: "100m"
+              memory: "256Mi"
       volumes:
         - name: sqlite-storage
           persistentVolumeClaim:
@@ -58,10 +58,10 @@ metadata:
 spec:
   selector:
     app: request-filter
-  type: NodePort
+  type: LoadBalancer
   ports:
     - protocol: TCP
-      port: 80
+      port: 90
       targetPort: 8888
       nodePort: 32500  # example NodePort in range 30000-32767
 

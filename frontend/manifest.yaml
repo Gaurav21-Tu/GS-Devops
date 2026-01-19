@@ -17,14 +17,14 @@ spec:
     spec:
       containers:
         - name: frontend
-          image: frontend:latest
+          image: devart.azurecr.io/frontend :latest
           imagePullPolicy: Never
           ports:
             - containerPort: 80
           resources:
-            limits:
-              cpu: "200m"
-              memory: "256Mi"
+            requests:
+              cpu: "100m"
+              memory: "128Mi"
 ---
 apiVersion: v1
 kind: Service
@@ -34,7 +34,7 @@ metadata:
 spec:
   selector:
     app: frontend
-  type: NodePort
+  type: LoadBalancer
   ports:
     - protocol: TCP
       port: 80
