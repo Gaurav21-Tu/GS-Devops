@@ -11,7 +11,7 @@ import asyncio
 import redis.asyncio as redis
 
 # ----------- Config -------------
-DEFAULT_BACKEND_URL = os.getenv("BACKEND_URL", "http://backend.filter.svc.cluster.local:80")
+DEFAULT_BACKEND_URL = os.getenv("BACKEND_URL", "http://backend.filter.svc.cluster.local:90")
 LISTEN_PORT = int(os.getenv("LISTEN_PORT", "8080"))
 WINDOW_SECONDS = int(os.getenv("WINDOW_SECONDS", "10"))        # fixed window length
 THRESHOLD = int(os.getenv("THRESHOLD", "10"))                  # how many in one window to block
