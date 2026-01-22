@@ -17,14 +17,17 @@ spec:
     spec:
       containers:
         - name: frontend
-          image: devart.azurecr.io/frontend:latest
+          image: frontend:latest
           imagePullPolicy: Never
+          env:
+            - name: REACT_APP_BASE_URL
+              value: "http://132.220.12.104:90"
           ports:
             - containerPort: 80
           resources:
-            requests:
-              cpu: "100m"
-              memory: "128Mi"
+            limits:
+              cpu: "200m"
+              memory: "256Mi"
 ---
 apiVersion: v1
 kind: Service
