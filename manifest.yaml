@@ -40,15 +40,30 @@ spec:
             - name: SQLITE_DB_PATH
               value: "/data/sqdata/request_filter.db"
             - name: COSMOS_URI
-              value: "https://gaurav.documents.azure.com:443/"
+              valueFrom: 
+               secretKeyRef:
+                 name: cosmos_secret
+                 key: COSMOS_URI
             - name: COSMOS_KEY
-              value: "AFMd1khv72EchA1bQPyFtDjmswyyM6CM7cuOI86JkIkKyAWB12ewQ5dVIkYefy2T5nZoMOelkfdkACDbuqXK9g=="
+              valueFrom:
+                secretKeyRef:
+                  name: cosmos_secret
+                  key: COSMOS_KEY
             - name: COSMOS_DATABASE
-              value: "logs-db"
+              valueFrom:
+                secretKeyRef:
+                  name: cosmos_secret
+                  key: COSMOS_DATABASE
             - name: COSMOS_CONTAINER_LOGS
-              value: "application-logs"
+              valueFrom:
+                secretKeyRef:
+                  name: cosmos_secret
+                  key: COSMOS_CONTAINER_LOGS
             - name: COSMOS_CONTAINER_BLOCKS
-              value: "blocked-patterns"
+              valueFrom:
+                secretKeyRef:
+                  name: cosmos_secret
+                  key: COSMOS_CONTAINER_BLOCKS
           ports:
             - containerPort: 8888
           resources:
