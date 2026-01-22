@@ -2,12 +2,16 @@ import { useState, useEffect } from 'react';
 import { useNavigate } from 'react-router-dom';
 import './LogsPage.css';
 
+const API_BASE_URL = window.ENV?.REACT_APP_BASE_URL || 'http://10.26.30.175:32500';
+
 function LogsPage() {
   const navigate = useNavigate();
   const [logs, setLogs] = useState([]);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState(null);
   const [filter, setFilter] = useState('');
+  
+  
 
   useEffect(() => {
     fetchLogs();
@@ -17,7 +21,7 @@ function LogsPage() {
 
   const fetchLogs = async () => {
     try {
-      const response = await fetch('/__admin/logs');
+      const response = await fetch(`${API_BASE_URL}/__admin/logs`);
       if (!response.ok) throw new Error('Failed to fetch logs');
       const data = await response.json();
       setLogs(data.logs || []);

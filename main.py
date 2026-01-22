@@ -1,101 +1,131 @@
-# app_fixed_window_redis.py
+# app_fixed_window_redis_cosmosdb.py
 import os
 import time
 import hashlib
 import logging
+import uuid
 from typing import Dict, Tuple, List
 from fastapi import FastAPI, Request, Response, HTTPException
 from fastapi.responses import JSONResponse
+from fastapi.middleware.cors import CORSMiddleware
 import httpx
 import asyncio
 import redis.asyncio as redis
+from datetime import datetime
+from azure.cosmos.aio import CosmosClient
+from azure.cosmos import exceptions, PartitionKey
 
 # ----------- Config -------------
 DEFAULT_BACKEND_URL = os.getenv("BACKEND_URL", "http://backend.filter.svc.cluster.local:90")
 LISTEN_PORT = int(os.getenv("LISTEN_PORT", "8080"))
-WINDOW_SECONDS = int(os.getenv("WINDOW_SECONDS", "10"))        # fixed window length
-THRESHOLD = int(os.getenv("THRESHOLD", "10"))                  # how many in one window to block
-BLOCK_DURATION = int(os.getenv("BLOCK_DURATION", "300"))       # seconds to block
+WINDOW_SECONDS = int(os.getenv("WINDOW_SECONDS", "10"))
+THRESHOLD = int(os.getenv("THRESHOLD", "10"))
+BLOCK_DURATION = int(os.getenv("BLOCK_DURATION", "300"))
 TRUST_XFF = os.getenv("TRUST_XFF", "true").lower() in ("1", "true", "yes")
 REDIS_URL = os.getenv("REDIS_URL", "redis://localhost:6379/0")
 LOG_LEVEL = os.getenv("LOG_LEVEL", "INFO").upper()
 
+# Azure Cosmos DB Configuration
+COSMOS_URI = os.getenv("COSMOS_URI", "https://gaurav.documents.azure.com:443/")
+COSMOS_KEY = os.getenv("COSMOS_KEY", "AFMd1khv72EchA1bQPyFtDjmswyyM6CM7cuOI86JkIkKyAWB12ewQ5dVIkYefy2T5nZoMOelkfdkACDbuqXK9g==")
+COSMOS_DATABASE = os.getenv("COSMOS_DATABASE", "logs-db")
+COSMOS_CONTAINER_LOGS = os.getenv("COSMOS_CONTAINER_LOGS", "application-logs")
+COSMOS_CONTAINER_BLOCKS = os.getenv("COSMOS_CONTAINER_BLOCKS", "blocked-patterns")
+
 # Redis key for dynamic backend URL
 BACKEND_URL_KEY = "config:backend_url"
 
-# ----------- Logging ------------
-import sqlite3
-from datetime import datetime
-
-class SQLiteHandler(logging.Handler):
-    def __init__(self, db_path):
+# ----------- Logging with Cosmos DB ------------
+class CosmosDBHandler(logging.Handler):
+    """Custom logging handler that writes logs to Azure Cosmos DB"""
+    def __init__(self, cosmos_client, database_name: str, container_name: str):
         super().__init__()
-        self.db_path = db_path
-        self._init_db()
+        self.cosmos_client = cosmos_client
+        self.database_name = database_name
+        self.container_name = container_name
+        self.container = None
+        self._init_task = None
 
-    def _init_db(self):
-        conn = sqlite3.connect(self.db_path)
-        cursor = conn.cursor()
-        cursor.execute("""
-            CREATE TABLE IF NOT EXISTS logs (
-                id INTEGER PRIMARY KEY AUTOINCREMENT,
-                timestamp TEXT,
-                level TEXT,
-                message TEXT,
-                module TEXT,
-                funcName TEXT,
-                lineno INTEGER
-            )
-        """)
-        conn.commit()
-        conn.close()
+    async def init_container(self):
+        """Initialize the Cosmos DB container asynchronously"""
+        try:
+            database = self.cosmos_client.get_database_client(self.database_name)
+            
+            # Create container if it doesn't exist
+            try:
+                self.container = database.get_container_client(self.container_name)
+                await self.container.read()
+            except exceptions.CosmosResourceNotFoundError:
+                # Container doesn't exist, create it
+                self.container = await database.create_container(
+                    id=self.container_name,
+                    partition_key=PartitionKey(path="/level")
+                )
+        except Exception as e:
+            print(f"Failed to initialize Cosmos DB container: {e}")
 
     def emit(self, record):
+        """Emit a log record to Cosmos DB"""
+        if self.container is None:
+            return
+        
         try:
-            conn = sqlite3.connect(self.db_path)
-            cursor = conn.cursor()
-            cursor.execute("""
-                INSERT INTO logs (timestamp, level, message, module, funcName, lineno)
-                VALUES (?, ?, ?, ?, ?, ?)
-            """, (
-                datetime.fromtimestamp(record.created).isoformat(),
-                record.levelname,
-                self.format(record),
-                record.module,
-                record.funcName,
-                record.lineno
-            ))
-            conn.commit()
-            conn.close()
+            log_document = {
+                "id": str(uuid.uuid4()),
+                "timestamp": datetime.fromtimestamp(record.created).isoformat(),
+                "level": record.levelname,
+                "message": self.format(record),
+                "module": record.module,
+                "funcName": record.funcName,
+                "lineno": record.lineno,
+                "created": record.created
+            }
+            
+            # Schedule async operation
+            asyncio.create_task(self._write_log(log_document))
         except Exception:
             self.handleError(record)
 
-SQLITE_DB_PATH = os.getenv("SQLITE_DB_PATH", "/app/logs/request_filter.db")
+    async def _write_log(self, log_document):
+        """Write log document to Cosmos DB"""
+        try:
+            await self.container.create_item(body=log_document)
+        except Exception as e:
+            print(f"Failed to write log to Cosmos DB: {e}")
 
+# Initialize Cosmos DB client
+cosmos_client = CosmosClient(COSMOS_URI, credential=COSMOS_KEY)
+
+# ----------- Logging Setup ------------
 logging.basicConfig(level=LOG_LEVEL)
 logger = logging.getLogger("request-filter")
 console_handler = logging.StreamHandler()
 console_handler.setLevel(LOG_LEVEL)
 
-# Add SQLite handler
-sqlite_handler = SQLiteHandler(SQLITE_DB_PATH)
-sqlite_handler.setLevel(LOG_LEVEL)
+# Add Cosmos DB handler
+cosmos_handler = CosmosDBHandler(cosmos_client, COSMOS_DATABASE, COSMOS_CONTAINER_LOGS)
+cosmos_handler.setLevel(LOG_LEVEL)
 
 logger.addHandler(console_handler)
-logger.addHandler(sqlite_handler)
-
-# Test log
-logger.info("This is a test log before writing to SQLite.")
-logger.warning("Testing warning log.")
-logger.error("Something went wrong!")
+logger.addHandler(cosmos_handler)
 
 # ----------- FastAPI & clients ----
-app = FastAPI(title="Request Filter Proxy (Fixed Window + Redis)")
+app = FastAPI(title="Request Filter Proxy (Fixed Window + Redis + Cosmos DB)")
+
+# Add CORS middleware
+app.add_middleware(
+    CORSMiddleware,
+    allow_origins=["*"],
+    allow_credentials=True,
+    allow_methods=["*"],
+    allow_headers=["*"],
+)
+
 client = httpx.AsyncClient(timeout=30.0, follow_redirects=False)
 
 # ----------- Redis client -------
 redis_client = redis.from_url(
-    REDIS_URL, 
+    REDIS_URL,
     decode_responses=True,
     retry_on_timeout=True,
     socket_keepalive=True,
@@ -104,11 +134,53 @@ redis_client = redis.from_url(
     health_check_interval=30
 )
 
-# Key patterns used:
-# - Counter key per window: "cnt:{fingerprint}:{window_start}"
-# - Block key: "blk:{fingerprint}"  (value: "1", TTL = BLOCK_DURATION)
-# - Block metadata (hash): "blkmeta:{fingerprint}" (HSET fields)
-# We purposely keep the design simple for fixed-window behavior (atomic INCR).
+# Cosmos DB containers
+logs_container = None
+blocks_container = None
+
+@app.on_event("startup")
+async def startup_event():
+    """Initialize Cosmos DB containers on startup"""
+    global logs_container, blocks_container
+    
+    try:
+        # Initialize logging container
+        await cosmos_handler.init_container()
+        
+        # Initialize database client
+        database = cosmos_client.get_database_client(COSMOS_DATABASE)
+        
+        # Initialize logs container
+        try:
+            logs_container = database.get_container_client(COSMOS_CONTAINER_LOGS)
+            await logs_container.read()
+        except exceptions.CosmosResourceNotFoundError:
+            logs_container = await database.create_container(
+                id=COSMOS_CONTAINER_LOGS,
+                partition_key=PartitionKey(path="/level")
+            )
+        
+        # Initialize blocks container
+        try:
+            blocks_container = database.get_container_client(COSMOS_CONTAINER_BLOCKS)
+            await blocks_container.read()
+        except exceptions.CosmosResourceNotFoundError:
+            blocks_container = await database.create_container(
+                id=COSMOS_CONTAINER_BLOCKS,
+                partition_key=PartitionKey(path="/fingerprint")
+            )
+        
+        logger.info("Cosmos DB containers initialized successfully")
+        logger.info("Application startup complete with Azure Cosmos DB integration")
+        
+    except Exception as e:
+        logger.error(f"Failed to initialize Cosmos DB: {e}")
+
+@app.on_event("shutdown")
+async def shutdown_event():
+    """Cleanup on shutdown"""
+    await cosmos_client.close()
+    await client.aclose()
 
 # ----------- Helpers ------------
 async def get_backend_url() -> str:
@@ -132,7 +204,7 @@ async def set_backend_url(url: str) -> bool:
         return False
 
 def get_client_ip(request: Request) -> str:
-    """Extract client IP; respect X-Forwarded-For if configured (only enable behind trusted proxy)."""
+    """Extract client IP; respect X-Forwarded-For if configured."""
     if TRUST_XFF:
         xff = request.headers.get("x-forwarded-for")
         if xff:
@@ -142,10 +214,7 @@ def get_client_ip(request: Request) -> str:
     return "unknown"
 
 def fingerprint_request(method: str, path: str, headers: Dict[str, str], body_bytes: bytes, source_ip: str) -> str:
-    """
-    Create deterministic fingerprint for request.
-    We include method, path, source_ip, selected headers and a short body signature.
-    """
+    """Create deterministic fingerprint for request."""
     interesting = []
     for k in ("user-agent", "content-type", "accept", "authorization", "cookie"):
         v = headers.get(k, "")
@@ -161,47 +230,61 @@ def fingerprint_request(method: str, path: str, headers: Dict[str, str], body_by
     return hashlib.sha256(base.encode()).hexdigest()
 
 def current_window_start(now: float) -> int:
-    """Return the integer timestamp representing the start of the fixed window containing 'now'."""
+    """Return the integer timestamp representing the start of the fixed window."""
     return int(now) - (int(now) % WINDOW_SECONDS)
 
 async def is_blocked_redis(fingerprint: str) -> Tuple[bool, int]:
-    """
-    Check if fingerprint is currently blocked.
-    Returns (blocked_bool, seconds_remaining).
-    """
+    """Check if fingerprint is currently blocked."""
     blk_key = f"blk:{fingerprint}"
     ttl = await redis_client.ttl(blk_key)
     if ttl is None or ttl < 0:
         return False, 0
     return ttl > 0, max(0, int(ttl))
 
+async def store_block_to_cosmos(meta_payload: Dict):
+    """Store blocked pattern metadata to Cosmos DB for persistence"""
+    if blocks_container is None:
+        return
+    
+    try:
+        document = {
+            "id": str(uuid.uuid4()),
+            "fingerprint": meta_payload["fingerprint"],
+            "source_ip": meta_payload["source_ip"],
+            "method": meta_payload["method"],
+            "path": meta_payload["path"],
+            "user_agent": meta_payload["user_agent"],
+            "content_type": meta_payload["content_type"],
+            "body_hash": meta_payload["body_hash"],
+            "first_seen": meta_payload["first_seen"],
+            "blocked_at": meta_payload["blocked_at"],
+            "count_in_window": meta_payload["count_in_window"],
+            "block_duration": BLOCK_DURATION,
+            "timestamp": datetime.utcnow().isoformat()
+        }
+        await blocks_container.create_item(body=document)
+        logger.info(f"Stored block metadata to Cosmos DB for fingerprint: {meta_payload['fingerprint']}")
+    except Exception as e:
+        logger.error(f"Failed to store block to Cosmos DB: {e}")
+
 async def mark_and_check_fixed_window(fingerprint: str, meta: Dict) -> Tuple[bool, int]:
-    """
-    Fixed-window implementation using atomic INCR + EXPIRE.
-    Steps:
-      1) Determine the counter key for this fingerprint and window.
-      2) INCR it atomically. If value >= THRESHOLD -> create block key with TTL and store metadata.
-    """
+    """Fixed-window implementation using atomic INCR + EXPIRE."""
     now = time.time()
     window_start = current_window_start(now)
     cnt_key = f"cnt:{fingerprint}:{window_start}"
-    # Increase counter atomically
+    
     try:
         count = await redis_client.incr(cnt_key)
     except Exception as e:
         logger.exception("Redis INCR failed: %s", e)
-        # As fallback, allow request (deny only on clear evidence)
         return False, 0
 
-    # Ensure TTL exists on the counter key (so it expires after some time)
     await redis_client.expire(cnt_key, WINDOW_SECONDS * 2)
 
     if count >= THRESHOLD:
-        # create block key (value can be simple "1")
         blk_key = f"blk:{fingerprint}"
         blk_meta_key = f"blkmeta:{fingerprint}"
 
-        # store minimal metadata about the block in a HASH for admin UI / future Azure export
         meta_payload = {
             "fingerprint": fingerprint,
             "source_ip": meta.get("source_ip", ""),
@@ -215,7 +298,7 @@ async def mark_and_check_fixed_window(fingerprint: str, meta: Dict) -> Tuple[boo
             "count_in_window": str(count)
         }
 
-        # Use pipeline to set both keys atomically-ish (MULTI/EXEC)
+        # Store in Redis
         pipeline = redis_client.pipeline()
         pipeline.set(blk_key, "1", ex=BLOCK_DURATION)
         pipeline.hset(blk_meta_key, mapping=meta_payload)
@@ -223,13 +306,11 @@ async def mark_and_check_fixed_window(fingerprint: str, meta: Dict) -> Tuple[boo
         try:
             await pipeline.execute()
         except Exception:
-            # Even if metadata storing fails, ensure block key exists
             try:
                 await redis_client.set(blk_key, "1", ex=BLOCK_DURATION)
             except Exception:
                 logger.exception("Failed to set block key in Redis.")
 
-        # Optionally remove the counter key to free space
         try:
             await redis_client.delete(cnt_key)
         except Exception:
@@ -237,29 +318,15 @@ async def mark_and_check_fixed_window(fingerprint: str, meta: Dict) -> Tuple[boo
 
         logger.warning("Fingerprint blocked (fixed window): %s %s %s", fingerprint, meta.get("method"), meta.get("path"))
 
-        # ---------- FUTURE AZURE EXPORT POINT ----------
-        # Here you can push `meta_payload` (and additional context) to your Azure ingest:
-        # - send to Azure Blob / File Share as newline-delimited JSON
-        # - send to Azure Event Hubs / Service Bus for async processing
-        # - store to Cosmos DB / Table Storage
-        #
-        # Example (future): azure_upload(json.dumps(meta_payload))
-        # Include fields: fingerprint, source_ip, method, path, user_agent, content_type, body_hash,
-        # first_seen, blocked_at, block_expires_at (now+BLOCK_DURATION), count_in_window
-        #
-        # This is the place you will later integrate the API that pushes attack logs & fingerprint metadata
-        # to Azure for your UI to consume.
-        # -----------------------------------------------
+        # Store in Cosmos DB for persistence and analytics
+        asyncio.create_task(store_block_to_cosmos(meta_payload))
 
         return True, BLOCK_DURATION
 
     return False, 0
 
 async def forward_request_to_backend(request: Request, body: bytes) -> httpx.Response:
-    """
-    Forward request to backend preserving headers and body.
-    Remove hop-by-hop headers and set host to backend host.
-    """
+    """Forward request to backend preserving headers and body."""
     backend_url = await get_backend_url()
     path = request.url.path
     query = request.url.query
@@ -271,7 +338,6 @@ async def forward_request_to_backend(request: Request, body: bytes) -> httpx.Res
     for h in ["connection", "keep-alive", "proxy-authenticate", "proxy-authorization", "te", "trailer", "transfer-encoding", "upgrade"]:
         headers.pop(h, None)
 
-    # set host header for backend
     try:
         headers["host"] = httpx.URL(backend_url).host or headers.get("host", "")
     except Exception:
@@ -288,7 +354,6 @@ async def forward_request_to_backend(request: Request, body: bytes) -> httpx.Res
 # ----------- Middleware -----------
 @app.middleware("http")
 async def inspect_and_proxy(request: Request, call_next):
-    # allow admin endpoints to pass through
     if request.url.path.startswith("/__admin/"):
         return await call_next(request)
 
@@ -319,7 +384,6 @@ async def inspect_and_proxy(request: Request, call_next):
         "first_seen": time.time()
     }
 
-    # Fast path: check if blocked
     try:
         blocked, remaining = await is_blocked_redis(fingerprint)
     except Exception:
@@ -327,7 +391,6 @@ async def inspect_and_proxy(request: Request, call_next):
         blocked, remaining = False, 0
 
     if blocked:
-        # Text-only JSON blocked response (no image)
         headers = {
             "X-Blocked": "true",
             "X-Block-Reason": "pattern_matched",
@@ -342,7 +405,6 @@ async def inspect_and_proxy(request: Request, call_next):
         }
         return JSONResponse(status_code=403, content=content, headers=headers)
 
-    # Not currently blocked -> do the fixed-window increment & decide
     try:
         is_blocked, remaining = await mark_and_check_fixed_window(fingerprint, meta)
     except Exception as e:
@@ -364,14 +426,12 @@ async def inspect_and_proxy(request: Request, call_next):
         }
         return JSONResponse(status_code=403, content=content, headers=headers)
 
-    # Allowed: forward to backend
     try:
         upstream_resp = await forward_request_to_backend(request, body)
     except httpx.RequestError as e:
         logger.exception("Error forwarding to backend: %s", e)
         raise HTTPException(status_code=502, detail="Backend unreachable")
 
-    # return response preserving upstream headers (but avoid hop-by-hop)
     response_headers = {k: v for k, v in upstream_resp.headers.items() if k.lower() not in (
         "connection", "keep-alive", "proxy-authenticate", "proxy-authorization", "te", "trailer", "transfer-encoding", "upgrade")}
     return Response(content=upstream_resp.content, status_code=upstream_resp.status_code, headers=response_headers)
@@ -379,15 +439,9 @@ async def inspect_and_proxy(request: Request, call_next):
 # ----------- Admin endpoints ------------
 @app.get("/__admin/blocked")
 async def list_blocked():
-    """
-    Return active blocked fingerprints and metadata from Redis.
-    WARNING: Uses SCAN -- ok for moderate keyspaces; for very large Redis, adapt storage strategy.
-    """
-    cursor = "0"
+    """Return active blocked fingerprints and metadata from Redis."""
     results = []
-    # Use async SCAN
     async for key in redis_client.scan_iter(match="blkmeta:*"):
-        # key example: blkmeta:{fingerprint}
         fingerprint = key.split("blkmeta:", 1)[-1]
         meta = await redis_client.hgetall(key)
         ttl = await redis_client.ttl(f"blk:{fingerprint}")
@@ -397,16 +451,12 @@ async def list_blocked():
 
 @app.get("/__admin/stats")
 async def stats():
-    """
-    Show current counters for the active window.
-    Scans cnt:* keys for the current window to gather counts.
-    """
+    """Show current counters for the active window."""
     now = time.time()
     window_start = current_window_start(now)
     pattern = f"cnt:*:{window_start}"
     stats_list = []
     async for key in redis_client.scan_iter(match=pattern):
-        # key format: cnt:{fingerprint}:{window_start}
         try:
             parts = key.split(":")
             fingerprint = parts[1]
@@ -443,7 +493,6 @@ async def update_config_backend(request: Request):
         if not new_url:
             raise HTTPException(status_code=400, detail="backend_url is required")
         
-        # Basic URL validation
         if not (new_url.startswith("http://") or new_url.startswith("https://")):
             raise HTTPException(status_code=400, detail="backend_url must start with http:// or https://")
         
@@ -464,321 +513,52 @@ async def update_config_backend(request: Request):
 
 @app.get("/__admin/logs")
 async def get_logs(limit: int = 100):
-    """Get recent logs from SQLite database."""
+    """Get recent logs from Cosmos DB."""
+    if logs_container is None:
+        raise HTTPException(status_code=503, detail="Cosmos DB not initialized")
+    
     try:
-        conn = sqlite3.connect(SQLITE_DB_PATH)
-        cursor = conn.cursor()
-        cursor.execute("""
-            SELECT id, timestamp, level, message, module, funcName, lineno
-            FROM logs
-            ORDER BY id DESC
-            LIMIT ?
-        """, (limit,))
-        rows = cursor.fetchall()
-        conn.close()
-        
-        logs = []
-        for row in rows:
-            logs.append({
-                "id": row[0],
-                "timestamp": row[1],
-                "level": row[2],
-                "message": row[3],
-                "module": row[4],
-                "funcName": row[5],
-                "lineno": row[6]
+        query = f"SELECT * FROM c ORDER BY c.created DESC OFFSET 0 LIMIT {limit}"
+        items = []
+        async for item in logs_container.query_items(query=query, enable_cross_partition_query=True):
+            items.append({
+                "id": item.get("id"),
+                "timestamp": item.get("timestamp"),
+                "level": item.get("level"),
+                "message": item.get("message"),
+                "module": item.get("module"),
+                "funcName": item.get("funcName"),
+                "lineno": item.get("lineno")
             })
         
-        return {"logs": logs, "count": len(logs)}
+        return {"logs": items, "count": len(items)}
     except Exception as e:
-        logger.exception("Failed to retrieve logs")
+        logger.exception("Failed to retrieve logs from Cosmos DB")
         raise HTTPException(status_code=500, detail=f"Error retrieving logs: {str(e)}")
 
-# ----------- Run instructions (uvicorn) ------------
-# Start with: uvicorn app_fixed_window_redis:app --host 0.0.0.0 --port 8080
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-# import os
-# import time
-# import hashlib
-# import logging
-# from typing import Dict, Tuple
-# from fastapi import FastAPI, Request, Response, HTTPException
-# from fastapi.responses import FileResponse
-# import httpx
-# import asyncio
-
-# # ----------- Configuration -------------
-# BACKEND_URL = os.getenv("BACKEND_URL", "http://backend.default.svc.cluster.local:80")
-# LISTEN_PORT = int(os.getenv("LISTEN_PORT", "8080"))
-# WINDOW_SECONDS = int(os.getenv("WINDOW_SECONDS", "10"))           # How long is the detection window
-# THRESHOLD = int(os.getenv("THRESHOLD", "10"))                     # How many times a pattern can occur before block
-# BLOCK_DURATION = int(os.getenv("BLOCK_DURATION", "300"))         # How long to block matching pattern (in seconds)
-# TRUST_XFF = os.getenv("TRUST_XFF", "true").lower() in ("1", "true", "yes")
-# LOG_LEVEL = os.getenv("LOG_LEVEL", "info").upper()
-
-# # ----------- Logging -------------------
-# logging.basicConfig(level=LOG_LEVEL)
-# logger = logging.getLogger("request-filter")
-
-# # ----------- FastAPI -------------------
-# app = FastAPI(title="Request Filter Proxy")
-
-# # ----------- State ---------------------
-# counts: Dict[str, list] = {}  # Fingerprint → list of timestamps (for detection window)
-# blocked_patterns: Dict[str, Dict] = {}  # Fingerprint → metadata for blocked patterns
-# _counts_lock = asyncio.Lock()  # For thread-safe access to counts
-# client = httpx.AsyncClient(timeout=30.0, follow_redirects=False)
-
-# # ----------- Helper Functions ----------
-
-# def get_client_ip(request: Request) -> str:
-#     """Extract client IP, respecting X-Forwarded-For if configured."""
-#     if TRUST_XFF:
-#         xff = request.headers.get("x-forwarded-for")
-#         if xff:
-#             return xff.split(",")[0].strip()
-#     if request.client:
-#         return request.client.host
-#     return "unknown"
-
-# def fingerprint_request(method: str, path: str, headers: Dict[str, str], body_bytes: bytes, source_ip: str) -> str:
-#     """
-#     Create a hash (fingerprint) of key request properties to detect patterns.
-#     Includes method, path, selected headers, body signature, and source IP.
-#     """
-#     interesting = []
-#     for k in ["user-agent", "content-type", "accept", "authorization", "cookie"]:
-#         v = headers.get(k, "")
-#         if v:
-#             interesting.append(f"{k}:{v[:200]}")
-#     if not body_bytes:
-#         body_sig = ""
-#     elif len(body_bytes) <= 512:
-#         body_sig = body_bytes.decode(errors="replace")
-#     else:
-#         body_sig = hashlib.sha256(body_bytes).hexdigest()
-#     base = "|".join([method.upper(), path, source_ip, ",".join(interesting), body_sig])
-#     return hashlib.sha256(base.encode()).hexdigest()
-
-# async def mark_and_check(fingerprint: str, meta: Dict) -> Tuple[bool, int]:
-#     """
-#     Track a fingerprint occurrence, and decide if it should be blocked.
-#     If blocked, return True and remaining block duration.
-#     """
-#     now = time.time()
-
-#     # Remove expired blocked patterns
-#     expired = [fp for fp, data in blocked_patterns.items() if data["block_expires_at"] <= now]
-#     for fp in expired:
-#         blocked_patterns.pop(fp)
-
-#     # Already blocked?
-#     if fingerprint in blocked_patterns:
-#         remaining = int(blocked_patterns[fingerprint]["block_expires_at"] - now)
-#         return True, remaining
-
-#     async with _counts_lock:
-#         lst = counts.setdefault(fingerprint, [])
-#         lst.append(now)
-
-#         # Remove old timestamps (outside the sliding window)
-#         cutoff = now - WINDOW_SECONDS
-#         while lst and lst[0] < cutoff:
-#             lst.pop(0)
-
-#         count = len(lst)
-#         if count >= THRESHOLD:
-#             # Block pattern and store metadata
-#             block_expires_at = now + BLOCK_DURATION
-#             blocked_patterns[fingerprint] = {
-#                 "fingerprint": fingerprint,
-#                 "source_ip": meta.get("source_ip", ""),
-#                 "method": meta.get("method", ""),
-#                 "path": meta.get("path", ""),
-#                 "user_agent": meta.get("user_agent", ""),
-#                 "content_type": meta.get("content_type", ""),
-#                 "body_hash": meta.get("body_hash", ""),
-#                 "first_seen": meta.get("first_seen", now),
-#                 "blocked_at": now,
-#                 "block_expires_at": block_expires_at,
-#                 "count_in_window": count
-#             }
-#             logger.warning("Pattern blocked: %s (%s %s from %s)", fingerprint, meta["method"], meta["path"], meta["source_ip"])
-#             counts.pop(fingerprint, None)
-#             return True, BLOCK_DURATION
-
-#         return False, 0
-
-# async def forward_request_to_backend(request: Request, body: bytes) -> httpx.Response:
-#     """
-#     Forwards the request to the actual backend while preserving most headers and content.
-#     """
-#     path = request.url.path
-#     query = request.url.query
-#     url = BACKEND_URL.rstrip("/") + path
-#     if query:
-#         url += "?" + query
-
-#     headers = dict(request.headers)
-#     # Remove hop-by-hop headers
-#     for h in ["connection", "keep-alive", "proxy-authenticate", "proxy-authorization", "te", "trailer", "transfer-encoding", "upgrade"]:
-#         headers.pop(h, None)
-
-#     headers["host"] = httpx.URL(BACKEND_URL).host or headers.get("host", "")
-
-#     return await client.request(
-#         method=request.method,
-#         url=url,
-#         content=body,
-#         headers=headers,
-#         timeout=30.0
-#     )
-
-# # ----------- Middleware ----------------
-
-# @app.middleware("http")
-# async def inspect_and_proxy(request: Request, call_next):
-#     """Intercept every HTTP request to inspect, block, or forward."""
-#     # Skip middleware for admin endpoints - let FastAPI handle them directly
-#     if request.url.path.startswith("/__admin/"):
-#         return await call_next(request)
+@app.get("/__admin/blocked/history")
+async def get_blocked_history(limit: int = 100):
+    """Get historical blocked patterns from Cosmos DB."""
+    if blocks_container is None:
+        raise HTTPException(status_code=503, detail="Cosmos DB not initialized")
     
-#     try:
-#         body = await request.body()
-#     except Exception:
-#         body = b""
+    try:
+        query = f"SELECT * FROM c ORDER BY c.blocked_at DESC OFFSET 0 LIMIT {limit}"
+        items = []
+        async for item in blocks_container.query_items(query=query, enable_cross_partition_query=True):
+            items.append(item)
+        
+        return {"blocks": items, "count": len(items)}
+    except Exception as e:
+        logger.exception("Failed to retrieve block history from Cosmos DB")
+        raise HTTPException(status_code=500, detail=f"Error retrieving block history: {str(e)}")
 
-#     source_ip = get_client_ip(request)
-#     headers_lower = {k.lower(): v for k, v in request.headers.items()}
-#     body_hash = hashlib.sha256(body).hexdigest() if body else ""
-
-#     fingerprint = fingerprint_request(
-#         method=request.method,
-#         path=request.url.path,
-#         headers=headers_lower,
-#         body_bytes=body,
-#         source_ip=source_ip
-#     )
-
-#     meta = {
-#         "source_ip": source_ip,
-#         "method": request.method,
-#         "path": request.url.path,
-#         "user_agent": headers_lower.get("user-agent", ""),
-#         "content_type": headers_lower.get("content-type", ""),
-#         "body_hash": body_hash,
-#         "first_seen": time.time()
-#     }
-
-#     is_blocked, remaining = await mark_and_check(fingerprint, meta)
-
-#     if is_blocked:
-#         # Serve the blocked image instead of JSON response
-#         image_path = "/app/image/Image (1).jpg"
-#         if os.path.exists(image_path):
-#             return FileResponse(
-#                 path=image_path,
-#                 media_type="image/jpeg",
-#                 headers={
-#                     "X-Blocked": "true",
-#                     "X-Block-Reason": "pattern_matched",
-#                     "X-Block-Seconds-Remaining": str(remaining)
-#                 }
-#             )
-#         else:
-#             # Fallback to JSON if image not found
-#             return Response(
-#                 content=f'{{"GshieldSecurity":"Unauthorised Request","blocked":true,"reason":"pattern_matched","block_seconds_remaining":{remaining}}}',
-#                 status_code=403,
-#                 media_type="application/json"
-#             )
-
-#     try:
-#         upstream_resp = await forward_request_to_backend(request, body)
-#     except httpx.RequestError as e:
-#         logger.exception("Error forwarding to backend: %s", e)
-#         raise HTTPException(status_code=502, detail="Backend unreachable")
-
-#     return Response(
-#         content=upstream_resp.content,
-#         status_code=upstream_resp.status_code,
-#         headers={k: v for k, v in upstream_resp.headers.items()}
-#     )
-
-# # ----------- Admin API -----------------
-
-# @app.get("/__admin/blocked")
-# async def list_blocked():
-#     """List currently blocked request patterns with metadata."""
-#     now = time.time()
-#     results = []
-#     for data in blocked_patterns.values():
-#         results.append({
-#             "fingerprint": data["fingerprint"],
-#             "source_ip": data["source_ip"],
-#             "method": data["method"],
-#             "path": data["path"],
-#             "user_agent": data["user_agent"],
-#             "content_type": data["content_type"],
-#             "body_hash": data["body_hash"],
-#             "first_seen": int(data["first_seen"]),
-#             "blocked_at": int(data["blocked_at"]),
-#             "block_expires_at": int(data["block_expires_at"]),
-#             "block_seconds_remaining": int(data["block_expires_at"] - now),
-#             "count_in_window": data["count_in_window"]
-#         })
-#     return results
-
-# @app.get("/__admin/stats")
-# async def stats():
-#     """Show top fingerprints by count in the sliding window."""
-#     now = time.time()
-#     summary = {
-#         k: len([ts for ts in v if ts >= now - WINDOW_SECONDS])
-#         for k, v in counts.items()
-#     }
-#     top = sorted(summary.items(), key=lambda x: x[1], reverse=True)[:20]
-#     return {
-#         "now": int(now),
-#         "window_seconds": WINDOW_SECONDS,
-#         "threshold": THRESHOLD,
-#         "block_duration": BLOCK_DURATION,
-#         "top_patterns": top
-#     }
+# ----------- Health check ------------
+@app.get("/health")
+async def health():
+    """Health check endpoint"""
+    return {
+        "status": "healthy",
+        "cosmos_db": "connected" if logs_container and blocks_container else "disconnected",
+        "redis": "connected"
+    }

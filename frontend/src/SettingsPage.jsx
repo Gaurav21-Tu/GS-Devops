@@ -2,6 +2,9 @@ import { useState, useEffect } from 'react';
 import { useNavigate } from 'react-router-dom';
 import './SettingsPage.css';
 
+const API_BASE_URL = window.ENV?.REACT_APP_BASE_URL || 'http://10.26.30.175:32500';
+
+
 function SettingsPage() {
   const navigate = useNavigate();
   const [backendUrl, setBackendUrl] = useState('');
@@ -10,6 +13,7 @@ function SettingsPage() {
   const [loading, setLoading] = useState(true);
   const [saving, setSaving] = useState(false);
   const [message, setMessage] = useState(null);
+  
 
   useEffect(() => {
     fetchConfig();
@@ -17,7 +21,7 @@ function SettingsPage() {
 
   const fetchConfig = async () => {
     try {
-      const response = await fetch('/__admin/config/backend');
+      const response = await fetch(`${API_BASE_URL}/__admin/config/backend`);
       const data = await response.json();
       setBackendUrl(data.backend_url);
       setDefaultBackendUrl(data.default_backend_url);
@@ -44,7 +48,7 @@ function SettingsPage() {
     setMessage(null);
 
     try {
-      const response = await fetch('/__admin/config/backend', {
+      const response = await fetch(`${API_BASE_URL}/__admin/config/backend`, {
         method: 'POST',
         headers: {
           'Content-Type': 'application/json',

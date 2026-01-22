@@ -24,7 +24,7 @@ spec:
               mountPath: /data/sqdata
           env:
             - name: BACKEND_URL
-              value: "http://10.26.30.45:31087"
+              value: "http://httpbin.org"
             - name: REDIS_URL
               value: "redis://:yourpassword@redis.filter.svc.cluster.local:6379/0"  
             - name: LISTEN_PORT
@@ -39,6 +39,16 @@ spec:
               value: "true"
             - name: SQLITE_DB_PATH
               value: "/data/sqdata/request_filter.db"
+            - name: COSMOS_URI
+              value: "https://gaurav.documents.azure.com:443/"
+            - name: COSMOS_KEY
+              value: "AFMd1khv72EchA1bQPyFtDjmswyyM6CM7cuOI86JkIkKyAWB12ewQ5dVIkYefy2T5nZoMOelkfdkACDbuqXK9g=="
+            - name: COSMOS_DATABASE
+              value: "logs-db"
+            - name: COSMOS_CONTAINER_LOGS
+              value: "application-logs"
+            - name: COSMOS_CONTAINER_BLOCKS
+              value: "blocked-patterns"
           ports:
             - containerPort: 8888
           resources:
