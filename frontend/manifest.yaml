@@ -17,7 +17,7 @@ spec:
     spec:
       containers:
         - name: frontend
-          image: frontend:latest
+          image: devart.azurecr.io/frontend:latest
           imagePullPolicy: Never
           env:
             - name: REACT_APP_BASE_URL

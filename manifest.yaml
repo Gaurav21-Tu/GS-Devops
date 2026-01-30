@@ -42,27 +42,27 @@ spec:
             - name: COSMOS_URI
               valueFrom: 
                secretKeyRef:
-                 name: cosmos_secret
+                 name: cosmos
                  key: COSMOS_URI
             - name: COSMOS_KEY
               valueFrom:
                 secretKeyRef:
-                  name: cosmos_secret
+                  name: cosmos
                   key: COSMOS_KEY
             - name: COSMOS_DATABASE
               valueFrom:
                 secretKeyRef:
-                  name: cosmos_secret
+                  name: cosmos
                   key: COSMOS_DATABASE
             - name: COSMOS_CONTAINER_LOGS
               valueFrom:
                 secretKeyRef:
-                  name: cosmos_secret
+                  name: cosmos
                   key: COSMOS_CONTAINER_LOGS
             - name: COSMOS_CONTAINER_BLOCKS
               valueFrom:
                 secretKeyRef:
-                  name: cosmos_secret
+                  name: cosmos
                   key: COSMOS_CONTAINER_BLOCKS
           ports:
             - containerPort: 8888
