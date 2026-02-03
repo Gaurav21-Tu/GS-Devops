@@ -1,0 +1,32 @@
+trigger:
+ branches:
+  include:
+    feature/*
+
+pool:
+ name: Myagent
+ demands:
+  - Selfhosted1
+
+
+variables:
+ imageRepo: front
+ dockerfilepath: services/front/Dockerfile
+ buildContext: services/front
+
+
+steps:
+- checkout: self 
+
+
+- task: Docker@2
+  displayName: Build and Push 
+
+  inputs:
+   containerRegistry: Acr-connection
+   repository: $(imageRepo)
+   command: buildandPush
+   dockerFile: $(dockerfilepath)
+   buidContext: $(buildContext)   
+   tags: |
+     $(Build.BuildId)
