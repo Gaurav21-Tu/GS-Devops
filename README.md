@@ -21,28 +21,23 @@ A FastAPI-based reverse proxy that filters and rate-limits requests using a fixe
 ### Architecture diagram
 
 ```mermaid
-config:
-   theme: forest
-   look: neo
----
 flowchart LR
+    Client[Client]
+    Proxy["Request Filter Proxy (FastAPI)"]
+    Admin["Admin Endpoints (__admin)"]
+    Redis[(Redis - Rate Limits and TTL)]
+    Cosmos[(Azure Cosmos DB - Logs and History)]
+    Backend["Upstream Backend API"]
 
-      Client[Client]
-      Proxy["Request Filter Proxy (FastAPI)"]
-      Admin["Admin Endpoints - __admin"]
-      Redis[(Redis - Rate Limits TTL Counters)]
-      Cosmos[(Azure Cosmos DB - Logs and Block History)]
-      Backend["Upstream Backend API"]
+    Client -->|HTTP Request| Proxy
 
-      Client -->|HTTP Request| Proxy
+    Proxy -->|Admin API| Admin
+    Proxy -->|Rate Limit Check| Redis
+    Proxy -->|Write Logs| Cosmos
+    Proxy -->|Forward Request| Backend
 
-      Proxy -->|Admin API| Admin
-      Proxy -->|INCR EXPIRE Block Checks| Redis
-      Proxy -->|Logs and History| Cosmos
-      Proxy -->|Forward Valid Request| Backend
-
-      Backend -->|Response| Proxy
-      Proxy -->|HTTP Response| Client
+    Backend -->|Response| Proxy
+    Proxy -->|HTTP Response| Client
 ```
 
 ## Configuration
