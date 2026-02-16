@@ -1,0 +1,45 @@
+apiVersion: gateway.envoyproxy.io/v1alpha1
+kind: EnvoyPatchPolicy
+metadata:
+  name: httpbinpolicy
+  namespace: envoy
+spec:
+  # EnvoyPatchPolicy only supports JSONPatch today
+  type: JSONPatch
+# Applied on global level to Gateway not only sepcific HttpRoute 
+  targetRef:
+    group: gateway.networking.k8s.io
+    kind: Gateway         
+    name: demogateway
+
+  jsonPatches:
+  - type: type.googleapis.com/envoy.config.listener.v3.Listener
+    # <namespace>/<gateway-name>/<listener-name>
+    name: envoy/demogateway/http
+    operation:
+      op: add
+      # Insert RBAC HTTP filter before the router filter in the
+      # HttpConnectionManager's http_filters list.
+      path: /default_filter_chain/filters/0/typed_config/http_filters/0
+      value:
+        name: envoy.filters.http.rbac
+        typed_config:
+          "@type": type.googleapis.com/envoy.extensions.filters.http.rbac.v3.RBAC
+          rules:
+            action: ALLOW
+            policies:
+              allow-admin-get:
+                permissions:
+                - and_rules:
+                    rules:
+                    - header:
+                        name: ":path"
+                        string_match:
+                          prefix: "/get"
+                    - header:
+                        name: ":method"
+                        exact_match: "GET"
+                principals:
+                - header:
+                    name: "x-role"
+                    exact_match: "admin"

@@ -1,0 +1,43 @@
+apiVersion: v1
+kind: Namespace 
+metadata:
+ name: envoy
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+ name: dummyserver
+ namespace: envoy
+
+spec:
+ replicas: 1
+ selector:
+  matchLabels:
+   app: httpbin
+ 
+ template:
+  metadata:
+   labels:
+    app: httpbin
+
+  spec:
+   containers:
+    - name: httpbincontainer
+      image: kennethreitz/httpbin
+      ports:
+       - containerPort: 80
+
+---
+
+apiVersion: v1
+kind: Service
+metadata:
+ name: binservice
+ namespace: envoy
+spec:
+  selector:
+   app: httpbin
+  ports:
+  - port: 80
+    targetPort: 80
+
